@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.js.map
+coverage/
+.DS_Store
+client/node_modules/
+client/dist/
+package-lock.json
+client/package-lock.json
