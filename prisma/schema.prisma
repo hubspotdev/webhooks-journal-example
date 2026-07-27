@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Authorization {
+  customerId   String   @id
+  hsPortalId   String
+  accessToken  String
+  refreshToken String
+  expiresIn    String
+  expiresAt    DateTime
+}
+
+model ClientCredentialToken {
+  id          Int      @id @default(autoincrement())
+  accessToken String
+  expiresAt   DateTime
+}
+
+model Contact {
+  id               Int       @id @default(autoincrement())
+  hsObjectId       String
+  portalId         String
+  email            String?
+  firstname        String?
+  lastname         String?
+  lastModifiedDate DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([hsObjectId, portalId])
+  @@index([hsObjectId])
+}
+
+model JournalCursor {
+  id            Int     @id @default(autoincrement())
+  currentOffset String?
+  portalId      String  @unique
+}
+
+model SnapshotJob {
+  id               Int      @id @default(autoincrement())
+  snapshotStatusId String   @unique
+  status           String   @default("PENDING")
+  portalId         String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
