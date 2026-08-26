@@ -23,6 +23,7 @@ import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import AddIcon from '@mui/icons-material/Add';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import DeleteIcon from '@mui/icons-material/Delete';
 import PersonIcon from '@mui/icons-material/Person';
 import PeopleIcon from '@mui/icons-material/People';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -36,6 +37,9 @@ import {
   createBulkSnapshot,
   getSnapshotStatus,
   getSubscriptions,
+  createSubscription,
+  deleteSubscription,
+  deletePortalSubscriptions,
   getFilters,
   getPortals,
   installPortal,
@@ -133,6 +137,9 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
   const [exporting, setExporting] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [populatingTestData, setPopulatingTestData] = useState(false);
+  const [deletingSubId, setDeletingSubId] = useState<number | null>(null);
+  const [deletingAllSubs, setDeletingAllSubs] = useState(false);
+  const [addingSub, setAddingSub] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [subscriptionDialogOpen, setSubscriptionDialogOpen] = useState(false);
@@ -144,6 +151,13 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
   const [portalMenuAnchor, setPortalMenuAnchor] = useState<null | HTMLElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const snapshotPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Last-seen set of installed portals, used to detect installs/uninstalls
+  // between polls. null until the first fetch so we don't toast pre-existing
+  // portals on mount.
+  const knownPortalsRef = useRef<Set<string> | null>(null);
+  // Set when the user kicks off a manual OAuth install so the poller can
+  // auto-select the portal once it appears.
+  const pendingSelectRef = useRef(false);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
 
@@ -151,15 +165,6 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
 
   const showToast = useCallback((message: string, severity: Toast['severity'] = 'error') => {
     setToast({ message, severity });
-  }, []);
-
-  const fetchInstalledPortals = useCallback(async () => {
-    try {
-      const portals = await getPortals();
-      setInstalledPortals(portals);
-    } catch {
-      // non-critical
-    }
   }, []);
 
   const fetchContacts = useCallback(async () => {
@@ -187,12 +192,56 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
   const fetchSubscriptions = useCallback(async () => {
     try {
       const data = await getSubscriptions();
-      setSubscriptions(data);
-      await fetchFiltersForSubscriptions(data);
+      // APP_LIFECYCLE_EVENT subscriptions are app-global plumbing (created once
+      // at startup), not something the user manages per portal — hide them.
+      const managed = data.filter((s) => s.subscriptionType !== 'APP_LIFECYCLE_EVENT');
+      setSubscriptions(managed);
+      await fetchFiltersForSubscriptions(managed);
     } catch {
       // non-critical, silently ignore
     }
   }, [fetchFiltersForSubscriptions]);
+
+  // Polls the installed-portal registry and reconciles it against what we last
+  // saw. Because the app has no push channel, this diff is how the UI learns
+  // about APP_LIFECYCLE installs/uninstalls: a portal that appears fires a green
+  // toast and joins the dropdown; one that disappears is dropped.
+  const syncPortals = useCallback(async () => {
+    let portals: string[];
+    try {
+      portals = await getPortals();
+    } catch {
+      return; // non-critical, retry next tick
+    }
+
+    const next = new Set(portals);
+    const prev = knownPortalsRef.current;
+    knownPortalsRef.current = next;
+    setInstalledPortals(portals);
+
+    if (prev === null) return; // first load — don't announce pre-existing portals
+
+    const added = portals.filter((p) => !prev.has(p));
+    const removed = [...prev].filter((p) => !next.has(p));
+
+    if (added.length > 0) {
+      added.forEach((p) => showToast(`New portal ${p} installed`, 'success'));
+      if (pendingSelectRef.current) {
+        pendingSelectRef.current = false;
+        setSelectedPortal(added[0]);
+        setPage(0);
+      }
+      fetchSubscriptions();
+    }
+
+    if (removed.length > 0) {
+      if (removed.includes(selectedPortal)) {
+        setSelectedPortal('all');
+        setPage(0);
+      }
+      fetchSubscriptions();
+    }
+  }, [showToast, selectedPortal, fetchSubscriptions]);
 
   const updateListHeight = useCallback(() => {
     const el = listContainerRef.current;
@@ -213,12 +262,17 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
   useEffect(() => {
     fetchContacts();
     fetchSubscriptions();
-    fetchInstalledPortals();
     pollRef.current = setInterval(fetchContacts, 1500);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchContacts, fetchSubscriptions, fetchInstalledPortals]);
+  }, [fetchContacts, fetchSubscriptions]);
+
+  useEffect(() => {
+    syncPortals();
+    const id = setInterval(syncPortals, 3000);
+    return () => clearInterval(id);
+  }, [syncPortals]);
 
   useEffect(() => {
     if (!snapshotStatusId) return;
@@ -288,25 +342,66 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
     }
   };
 
+  const handleAddSubscription = async () => {
+    setAddingSub(true);
+    try {
+      await createSubscription(selectedPortal);
+      showToast('Subscription created', 'success');
+      await fetchSubscriptions();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to create subscription');
+    } finally {
+      setAddingSub(false);
+    }
+  };
+
+  const handleDeleteSubscription = async (subscriptionId: number) => {
+    setDeletingSubId(subscriptionId);
+    try {
+      await deleteSubscription(subscriptionId);
+      showToast('Subscription deleted', 'success');
+      await fetchSubscriptions();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete subscription');
+    } finally {
+      setDeletingSubId(null);
+    }
+  };
+
+  const handleDeleteAllSubscriptions = async () => {
+    setDeletingAllSubs(true);
+    try {
+      await deletePortalSubscriptions(selectedPortal);
+      showToast('Deleted all subscriptions for this portal', 'success');
+      await fetchSubscriptions();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete subscriptions');
+    } finally {
+      setDeletingAllSubs(false);
+    }
+  };
+
   const handleInstallPortal = async () => {
     setPortalMenuAnchor(null);
     try {
       const { authUrl } = await installPortal();
+      // The portal will surface via the /api/portals poll once OAuth completes;
+      // flag it so syncPortals auto-selects it (and shows the install toast).
+      pendingSelectRef.current = true;
       window.open(authUrl, '_blank');
 
+      // Ensure the newly installed portal gets its contact subscription. An
+      // APP_INSTALL lifecycle event would also provision this, but the manual
+      // flow shouldn't depend on that subscription being configured.
+      const seen = new Set(installedPortals);
       const checkInterval = setInterval(async () => {
         try {
           const portals = await getPortals();
-          if (portals.length > installedPortals.length) {
+          const newPortal = portals.find((p) => !seen.has(p));
+          if (newPortal) {
             clearInterval(checkInterval);
-            const newPortal = portals.find((p) => !installedPortals.includes(p));
-            setInstalledPortals(portals);
-            if (newPortal) {
-              await startJournal(newPortal);
-              setSelectedPortal(newPortal);
-              setPage(0);
-              showToast(`Portal ${newPortal} installed and selected`, 'success');
-            }
+            await startJournal(newPortal);
+            fetchSubscriptions();
           }
         } catch {
           // keep polling
@@ -315,6 +410,7 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
 
       setTimeout(() => clearInterval(checkInterval), 120000);
     } catch (err) {
+      pendingSelectRef.current = false;
       showToast(err instanceof Error ? err.message : 'Failed to start installation');
     }
   };
@@ -431,14 +527,55 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
         </Toolbar>
       </AppBar>
 
-      {subscriptions.length > 0 && (() => {
+      {(!isAllPortals || subscriptions.length > 0) && (() => {
         const OBJECT_TYPE_LABELS: Record<string, string> = { '0-1': 'Contact', '0-2': 'Company', '0-3': 'Deal', '0-5': 'Ticket' };
         const visibleSubs = isAllPortals
           ? subscriptions
           : subscriptions.filter((s) => String(s.portalId) === selectedPortal);
-        if (visibleSubs.length === 0) return null;
+        if (isAllPortals && visibleSubs.length === 0) return null;
+        const hasContactSub = visibleSubs.some((s) => s.objectTypeId === '0-1');
         return (
         <Box sx={{ px: 2, pt: 1.5, pb: 0.5, maxHeight: 240, overflowY: 'auto' }}>
+          {!isAllPortals && (
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mb: 1 }}>
+              <Tooltip title={hasContactSub ? 'A contact subscription already exists for this portal' : 'Create a contact subscription for this portal'}>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={addingSub ? <CircularProgress size={14} /> : <AddIcon sx={{ fontSize: 16 }} />}
+                    onClick={handleAddSubscription}
+                    disabled={addingSub || hasContactSub}
+                    sx={{ fontSize: '0.7rem', py: 0.25 }}
+                  >
+                    Add Subscription
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Remove every subscription for this portal">
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    startIcon={
+                      deletingAllSubs ? <CircularProgress size={14} /> : <DeleteSweepIcon sx={{ fontSize: 16 }} />
+                    }
+                    onClick={handleDeleteAllSubscriptions}
+                    disabled={deletingAllSubs || visibleSubs.length === 0}
+                    sx={{ fontSize: '0.7rem', py: 0.25 }}
+                  >
+                    Delete All Subscriptions
+                  </Button>
+                </span>
+              </Tooltip>
+            </Box>
+          )}
+          {!isAllPortals && visibleSubs.length === 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pb: 1 }}>
+              No subscriptions for this portal. Click "Add Subscription" to create one.
+            </Typography>
+          )}
           {visibleSubs.map((sub) => {
             const typeLabel = (sub.objectTypeId && OBJECT_TYPE_LABELS[sub.objectTypeId]) || sub.subscriptionType;
             const subFilters = filters[sub.id] || [];
@@ -446,6 +583,23 @@ export default function DataView({ portalId, onBack }: DataViewProps) {
               <Box key={sub.id} sx={{ mb: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                   <NotificationsActiveIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                  <Tooltip title="Delete subscription">
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDeleteSubscription(sub.id)}
+                        disabled={deletingSubId === sub.id}
+                        sx={{ p: 0.25 }}
+                      >
+                        {deletingSubId === sub.id ? (
+                          <CircularProgress size={14} />
+                        ) : (
+                          <DeleteIcon sx={{ fontSize: 16 }} />
+                        )}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Chip
                     label={`${isAllPortals ? `Portal ${sub.portalId} · ` : ''}${typeLabel} — ${sub.actions.join(', ')}`}
                     size="small"

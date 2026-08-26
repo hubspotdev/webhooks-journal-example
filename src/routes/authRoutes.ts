@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { buildAuthUrl, getInstalledPortals } from '../auth';
+import { buildAuthUrl } from '../auth';
+import { getKnownPortals } from '../portals';
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.get('/auth-status', async (_req: Request, res: Response) => {
 
 router.get('/portals', async (_req: Request, res: Response) => {
   try {
-    const portals = await getInstalledPortals();
+    const portals = await getKnownPortals();
     res.json(portals);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch installed portals' });

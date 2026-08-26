@@ -2,8 +2,10 @@ import axios from 'axios';
 import { Job } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../clients';
+import { registerPortal, unregisterPortal } from '../portals';
+import { createContactSubscription } from '../hubspot/subscriptions';
 import { createLogger } from '../utils/logger';
-import { JournalEvent, CrmObjectEvent } from '../types/common';
+import { JournalEvent, JournalEventItem, CrmObjectEvent, AppLifecycleEvent } from '../types/common';
 
 const logger = createLogger('EventProcessor');
 
@@ -114,18 +116,57 @@ async function processEvent(event: CrmObjectEvent, tx: Prisma.TransactionClient)
   }
 }
 
+function isAppLifecycleEvent(event: JournalEventItem): event is AppLifecycleEvent {
+  return event.type === 'appLifecycleEvent';
+}
+
+async function handleAppLifecycleEvent(event: AppLifecycleEvent): Promise<void> {
+  const portalId = String(event.portalId);
+
+  switch (event.action) {
+    case 'APP_INSTALL':
+      logger.info(`App installed on portal ${portalId}`);
+      await registerPortal(portalId);
+      // A portal just installed our app. This is where an integration
+      // dynamically provisions the subscriptions a new customer needs — no
+      // manual per-portal setup required. Here we create the default contact
+      // subscription so contact events start flowing for the portal right away.
+      await createContactSubscription(event.portalId);
+      break;
+    case 'APP_UNINSTALL':
+      logger.info(`App uninstalled from portal ${portalId}`);
+      // Drop the portal from our registry so it leaves the UI. We intentionally
+      // don't delete its subscriptions — the Webhooks Journal service removes an
+      // app's subscriptions for a portal automatically on uninstall.
+      await unregisterPortal(portalId);
+      break;
+    default:
+      logger.warn(`Unknown app lifecycle action: ${event.action}`);
+  }
+}
+
 export async function processJournalJob(job: Job): Promise<void> {
   const { url, offset } = job.data;
 
   logger.debug(`Processing journal entry at offset ${offset}`);
 
   const journalFile = await downloadJournalFile(url);
+  const events = journalFile.journalEvents;
+  const lifecycleEvents = events.filter(isAppLifecycleEvent);
+  const crmEvents = events.filter((e): e is CrmObjectEvent => !isAppLifecycleEvent(e));
 
+  // CRM events are reconciled together in one DB transaction. Lifecycle events
+  // are handled separately since they make HubSpot API calls (subscription
+  // provisioning) that shouldn't run inside a DB transaction.
   await prisma.$transaction(async (tx) => {
-    for (const event of journalFile.journalEvents) {
+    for (const event of crmEvents) {
       await processEvent(event, tx);
     }
   });
 
-  logger.debug(`Processed ${journalFile.journalEvents.length} events from offset ${offset}`);
+  for (const event of lifecycleEvents) {
+    await handleAppLifecycleEvent(event);
+  }
+
+  logger.debug(`Processed ${events.length} events from offset ${offset}`);
 }

@@ -37,6 +37,14 @@ model Contact {
   @@index([hsObjectId])
 }
 
+// Registry of portals currently known to this app. Populated by the OAuth
+// install flow and by APP_LIFECYCLE install events, and pruned on uninstall.
+// This backs the portal dropdown in the UI.
+model Portal {
+  portalId    String   @id
+  installedAt DateTime @default(now())
+}
+
 model JournalCursor {
   id            Int     @id @default(autoincrement())
   currentOffset String?

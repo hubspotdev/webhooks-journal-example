@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as hubspot from '@hubspot/api-client';
 import { prisma, hubspotClient, LIMITER_OPTIONS } from './clients';
 import { HUBSPOT_API_BASE, JOURNAL_SCOPES, OAUTH_SCOPES } from './utils/utils';
+import { registerPortal } from './portals';
 import { createLogger } from './utils/logger';
 
 const logger = createLogger('Auth');
@@ -59,6 +60,8 @@ export async function redeemCode(code: string): Promise<void> {
     },
   });
 
+  await registerPortal(portalId);
+
   logger.info(`OAuth tokens stored for portal ${portalId}`);
 }
 
@@ -108,14 +111,6 @@ export async function authenticateHubspotClientForPortal(portalId: string): Prom
     accessToken: token,
     limiterOptions: LIMITER_OPTIONS,
   });
-}
-
-export async function getInstalledPortals(): Promise<string[]> {
-  const auths = await prisma.authorization.findMany({
-    select: { hsPortalId: true },
-    distinct: ['hsPortalId'],
-  });
-  return auths.map((a) => a.hsPortalId);
 }
 
 // --- Client Credentials Flow (for Journal API access) ---

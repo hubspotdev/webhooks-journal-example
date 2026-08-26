@@ -24,8 +24,22 @@ export interface JournalBatchError {
 
 export interface JournalEvent {
   offset: string;
-  journalEvents: CrmObjectEvent[];
+  journalEvents: JournalEventItem[];
   publishedAt: string;
+}
+
+export type JournalEventItem = CrmObjectEvent | AppLifecycleEvent;
+
+// App-lifecycle events are app-global (delivered for every portal that installs
+// or uninstalls the app) and carry the affected portal in `portalId`.
+export interface AppLifecycleEvent {
+  type: 'appLifecycleEvent';
+  portalId: number;
+  occurredAt: string;
+  appId: number;
+  eventTypeId: string;
+  action: 'APP_INSTALL' | 'APP_UNINSTALL';
+  properties?: Record<string, string>;
 }
 
 export interface CrmObjectEvent {

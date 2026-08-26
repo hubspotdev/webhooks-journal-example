@@ -6,7 +6,9 @@ import swaggerUi from 'swagger-ui-express';
 import { prisma } from './clients';
 import { createJournalQueue, createJournalWorker, closeQueue } from './journal/queue';
 import { processJournalJob } from './journal/processor';
-import { stopPolling } from './journal/poller';
+import { startPolling, stopPolling } from './journal/poller';
+import { subscribeToAppLifecycleEvents } from './hubspot/subscriptions';
+import { backfillPortalsFromAuthorizations } from './portals';
 import { swaggerSpec } from './swagger';
 import { setupGracefulShutdown } from './utils/shutdown';
 import { errorHandler } from './utils/error';
@@ -61,10 +63,21 @@ app.use('/api', journalRouter);
 app.use(errorHandler);
 
 // --- Start Server ---
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   logger.info(`Server running on http://localhost:${PORT}`);
   logger.info(`API docs at http://localhost:${PORT}/api-docs`);
-  logger.info('Waiting for portal configuration via the frontend...');
+
+  try {
+    await backfillPortalsFromAuthorizations();
+    // Ensure the app-global lifecycle subscriptions exist, then start polling on
+    // boot so install/uninstall events (and any contact events) are consumed
+    // continuously — even before a portal is configured through the frontend.
+    await subscribeToAppLifecycleEvents();
+    startPolling(queue);
+    logger.info('Journal polling started; listening for app-lifecycle and contact events');
+  } catch (error) {
+    logger.error('Startup initialization failed', error as Error);
+  }
 });
 
 setupGracefulShutdown(server, prisma, async () => {

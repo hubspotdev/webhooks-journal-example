@@ -125,6 +125,21 @@ export function updateSubscription(data: {
   });
 }
 
+export function createSubscription(portalId: string): Promise<{ created: boolean }> {
+  return request('/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify({ portalId }),
+  });
+}
+
+export function deleteSubscription(subscriptionId: number): Promise<{ deleted: boolean }> {
+  return request(`/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+}
+
+export function deletePortalSubscriptions(portalId: string): Promise<{ deleted: boolean }> {
+  return request(`/subscriptions/portals/${portalId}`, { method: 'DELETE' });
+}
+
 export interface FilterCondition {
   filterType: string;
   property: string;

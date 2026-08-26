@@ -3,6 +3,7 @@ import { Queue } from 'bullmq';
 import { prisma } from '../clients';
 import { getClientCredentialToken } from '../auth';
 import { createLogger } from '../utils/logger';
+import { requestWithRetry } from '../utils/retry';
 import { HUBSPOT_API_BASE, JOURNAL_POLL_INTERVAL_MS, JOURNAL_BATCH_SIZE } from '../utils/utils';
 import { JournalEntry, JournalBatchResponse } from '../types/common';
 
@@ -24,9 +25,8 @@ const ALL_PORTALS_KEY = 'all';
 async function fetchLatestEntry(): Promise<JournalEntry | null> {
   try {
     const headers = await getAuthHeaders();
-    const response = await axios.get(
-      `${HUBSPOT_API_BASE}/webhooks/v4/journal/latest`,
-      { headers }
+    const response = await requestWithRetry(() =>
+      axios.get(`${HUBSPOT_API_BASE}/webhooks/v4/journal/latest`, { headers })
     );
     return response.data;
   } catch (error: unknown) {
@@ -45,19 +45,16 @@ async function fetchBatchNext(
   count: number
 ): Promise<JournalBatchResponse> {
   const headers = await getAuthHeaders();
-  const response = await axios.get(
-    `${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/${offset}/next/${count}`,
-    { headers }
+  const response = await requestWithRetry(() =>
+    axios.get(`${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/${offset}/next/${count}`, { headers })
   );
   return response.data;
 }
 
 async function retryFailedOffsets(offsets: string[]): Promise<JournalBatchResponse> {
   const headers = await getAuthHeaders();
-  const response = await axios.post(
-    `${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/read`,
-    { inputs: offsets },
-    { headers }
+  const response = await requestWithRetry(() =>
+    axios.post(`${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/read`, { inputs: offsets }, { headers })
   );
   return response.data;
 }
@@ -103,6 +100,9 @@ async function pollOnce(queue: Queue): Promise<void> {
     // sequence. Treat offsets as opaque pagination cursors, not sortable identifiers.
     const batch = await fetchBatchNext(cursor.currentOffset, JOURNAL_BATCH_SIZE);
 
+    // TODO(2027-03-beta migration): once we move to the 2027-03-beta journal
+    // endpoints, `batch/next` returns 404 on an invalid/aged-out offset (handled
+    // in the catch below), so no client-side stale-cursor recovery is needed.
     if (batch.results.length === 0 && batch.numErrors === 0) {
       logger.debug('No new journal entries');
       return;
@@ -175,7 +175,7 @@ async function pollOnce(queue: Queue): Promise<void> {
       if (status === 401 || status === 403) {
         logger.warn('Auth error during polling, token may need refresh');
       } else if (status === 429) {
-        logger.warn('Rate limited, will retry next cycle');
+        logger.warn('Still rate limited after backoff retries, will retry next cycle');
       } else if (status === 404) {
         logger.debug('No entries found at current offset');
       } else {
