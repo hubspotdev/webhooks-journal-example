@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getClientCredentialToken } from '../auth';
 import { createLogger } from '../utils/logger';
-import { HUBSPOT_API_BASE } from '../utils/utils';
+import { SUBSCRIPTIONS_API_BASE } from '../utils/utils';
 
 const logger = createLogger('Filters');
 
@@ -37,7 +37,7 @@ export async function createFilter(
   });
 
   const response = await axios.post(
-    `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions/filters`,
+    `${SUBSCRIPTIONS_API_BASE}/filters`,
     { subscriptionId, filter: { conditions: sanitizedConditions } },
     {
       headers: {
@@ -57,7 +57,7 @@ export async function getFiltersBySubscription(
   const token = await getClientCredentialToken();
 
   const response = await axios.get(
-    `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions/filters/subscription/${subscriptionId}`,
+    `${SUBSCRIPTIONS_API_BASE}/filters/subscription/${subscriptionId}`,
     {
       headers: { Authorization: `Bearer ${token}` },
     }
@@ -70,7 +70,7 @@ export async function deleteFilter(filterId: number): Promise<void> {
   const token = await getClientCredentialToken();
 
   await axios.delete(
-    `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions/filters/${filterId}`,
+    `${SUBSCRIPTIONS_API_BASE}/filters/${filterId}`,
     {
       headers: { Authorization: `Bearer ${token}` },
     }

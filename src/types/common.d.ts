@@ -9,8 +9,8 @@ export interface JournalBatchResponse {
   startedAt: string;
   completedAt: string;
   results: JournalEntry[];
-  numErrors: number;
-  errors: JournalBatchError[];
+  numErrors?: number;
+  errors?: JournalBatchError[];
 }
 
 export interface JournalBatchError {
@@ -72,7 +72,10 @@ export interface SnapshotStatusResponse {
 }
 
 export interface BulkSnapshotResponse {
-  snapshotStatusId: string;
+  id: string;
+  objectTypeId: string;
+  installPortalId: number;
+  links: Record<string, string>;
 }
 
 export interface ContactData {

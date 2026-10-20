@@ -177,7 +177,7 @@ The app uses **two OAuth flows**:
 
 ### Event Processing Pipeline
 
-1. The **Journal Poller** calls `GET /webhooks/v4/journal/batch/{offset}/next/100` once per second
+1. The **Journal Poller** calls `GET /webhooks-journal/journal/2027-03-beta/batch/{offset}/next/100` once per second
 2. Each journal entry URL is enqueued as a BullMQ job with 3 retry attempts and exponential backoff
 3. **Event Processor** workers (5 concurrent) dequeue jobs, download the S3 file, and process each event:
    - `CREATE` / `UPDATE` / `RESTORE` / `SNAPSHOT` → upsert contact in database
@@ -200,7 +200,7 @@ Filters narrow which events a subscription delivers to the journal. They are eva
 When a new portal installs your app, combine a bulk snapshot with incremental journal polling to get a complete, up-to-date view of the portal's data without gaps:
 
 1. **Create a subscription** for the object types and actions you care about (`CREATE`, `UPDATE`, `DELETE`, `MERGE`). In this example, the app creates these subscriptions automatically after install.
-2. **Trigger a bulk snapshot** by clicking "Bulk Export" in the UI (or calling `POST /webhooks/v4/snapshots/crm-bulk`). This exports every contact in the portal as `SNAPSHOT` events that flow into the journal.
+2. **Trigger a bulk snapshot** by clicking "Bulk Export" in the UI (or calling `POST /webhooks-journal/snapshots/2027-03-beta/crm-bulk`). This exports every contact in the portal as `SNAPSHOT` events that flow into the journal.
 3. **Poll the snapshot status** until it reaches `SUCCESS`. The UI handles this automatically, polling every second. A `404` response immediately after creation is expected — the status record is created asynchronously.
 4. **Continue polling incrementally.** The journal poller is already running, so it picks up the snapshot events as they appear and then seamlessly transitions to processing live `CREATE`/`UPDATE`/`DELETE` events as they arrive — no further bulk operations needed.
 

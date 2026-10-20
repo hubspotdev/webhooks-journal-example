@@ -2,6 +2,11 @@ export const PORT = 3002;
 
 export const HUBSPOT_API_BASE = 'https://api.hubapi.com';
 
+export const WEBHOOKS_JOURNAL_API_VERSION = '2027-03-beta';
+export const JOURNAL_API_BASE = `${HUBSPOT_API_BASE}/webhooks-journal/journal/${WEBHOOKS_JOURNAL_API_VERSION}`;
+export const SUBSCRIPTIONS_API_BASE = `${HUBSPOT_API_BASE}/webhooks-journal/subscriptions/${WEBHOOKS_JOURNAL_API_VERSION}`;
+export const SNAPSHOTS_API_BASE = `${HUBSPOT_API_BASE}/webhooks-journal/snapshots/${WEBHOOKS_JOURNAL_API_VERSION}`;
+
 export const JOURNAL_SCOPES = [
   'developer.webhooks_journal.read',
   'developer.webhooks_journal.subscriptions.read',

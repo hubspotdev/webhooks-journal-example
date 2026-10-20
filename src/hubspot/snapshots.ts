@@ -2,20 +2,20 @@ import axios from 'axios';
 import { getClientCredentialToken } from '../auth';
 import { prisma } from '../clients';
 import { createLogger } from '../utils/logger';
-import { HUBSPOT_API_BASE } from '../utils/utils';
+import { SNAPSHOTS_API_BASE, JOURNAL_API_BASE } from '../utils/utils';
 import { BulkSnapshotResponse, SnapshotStatusResponse } from '../types/common';
 
 const logger = createLogger('Snapshots');
 
 export async function createBulkSnapshot(
   portalId: number
-): Promise<BulkSnapshotResponse> {
+): Promise<{ snapshotStatusId: string }> {
   const token = await getClientCredentialToken();
 
   const response = await axios.post<BulkSnapshotResponse>(
-    `${HUBSPOT_API_BASE}/webhooks/v4/snapshots/crm-bulk`,
+    `${SNAPSHOTS_API_BASE}/crm-bulk`,
     {
-      portalId,
+      installPortalId: portalId,
       objectTypeId: '0-1',
       propertyNameFilter: ['email', 'firstname', 'lastname'],
     },
@@ -29,14 +29,14 @@ export async function createBulkSnapshot(
 
   await prisma.snapshotJob.create({
     data: {
-      snapshotStatusId: response.data.snapshotStatusId,
+      snapshotStatusId: response.data.id,
       status: 'PENDING',
       portalId: String(portalId),
     },
   });
 
-  logger.info(`Bulk snapshot initiated: statusId=${response.data.snapshotStatusId}`);
-  return response.data;
+  logger.info(`Bulk snapshot initiated: statusId=${response.data.id}`);
+  return { snapshotStatusId: response.data.id };
 }
 
 export async function getSnapshotStatus(
@@ -46,7 +46,7 @@ export async function getSnapshotStatus(
 
   try {
     const response = await axios.get<SnapshotStatusResponse>(
-      `${HUBSPOT_API_BASE}/webhooks/v4/journal/status/${statusId}`,
+      `${JOURNAL_API_BASE}/status/${statusId}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
 

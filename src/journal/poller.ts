@@ -4,7 +4,7 @@ import { prisma } from '../clients';
 import { getClientCredentialToken } from '../auth';
 import { createLogger } from '../utils/logger';
 import { requestWithRetry } from '../utils/retry';
-import { HUBSPOT_API_BASE, JOURNAL_POLL_INTERVAL_MS, JOURNAL_BATCH_SIZE } from '../utils/utils';
+import { JOURNAL_API_BASE, JOURNAL_POLL_INTERVAL_MS, JOURNAL_BATCH_SIZE } from '../utils/utils';
 import { JournalEntry, JournalBatchResponse } from '../types/common';
 
 const logger = createLogger('JournalPoller');
@@ -22,11 +22,11 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 const ALL_PORTALS_KEY = 'all';
 
-async function fetchLatestEntry(): Promise<JournalEntry | null> {
+async function fetchBoundaryEntry(position: 'earliest' | 'latest'): Promise<JournalEntry | null> {
   try {
     const headers = await getAuthHeaders();
     const response = await requestWithRetry(() =>
-      axios.get(`${HUBSPOT_API_BASE}/webhooks/v4/journal/latest`, { headers })
+      axios.get(`${JOURNAL_API_BASE}/${position}`, { headers })
     );
     return response.data;
   } catch (error: unknown) {
@@ -43,18 +43,25 @@ async function fetchLatestEntry(): Promise<JournalEntry | null> {
 async function fetchBatchNext(
   offset: string,
   count: number
-): Promise<JournalBatchResponse> {
+): Promise<JournalBatchResponse | null> {
   const headers = await getAuthHeaders();
-  const response = await requestWithRetry(() =>
-    axios.get(`${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/${offset}/next/${count}`, { headers })
-  );
-  return response.data;
+  try {
+    const response = await requestWithRetry(() =>
+      axios.get(`${JOURNAL_API_BASE}/batch/${offset}/next/${count}`, { headers })
+    );
+    return response.data;
+  } catch (error: unknown) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function retryFailedOffsets(offsets: string[]): Promise<JournalBatchResponse> {
   const headers = await getAuthHeaders();
   const response = await requestWithRetry(() =>
-    axios.post(`${HUBSPOT_API_BASE}/webhooks/v4/journal/batch/read`, { inputs: offsets }, { headers })
+    axios.post(`${JOURNAL_API_BASE}/batch/read`, { inputs: offsets }, { headers })
   );
   return response.data;
 }
@@ -69,24 +76,24 @@ async function pollOnce(queue: Queue): Promise<void> {
     });
 
     if (!cursor) {
-      logger.info('No cursor found, fetching latest journal entry to initialize...');
-      const latest = await fetchLatestEntry();
-      if (!latest) {
+      logger.info('No cursor found, fetching earliest journal entry to initialize...');
+      const earliest = await fetchBoundaryEntry('earliest');
+      if (!earliest) {
         logger.info('No journal entries available yet');
         return;
       }
 
       cursor = await prisma.journalCursor.create({
-        data: { portalId: ALL_PORTALS_KEY, currentOffset: latest.currentOffset },
+        data: { portalId: ALL_PORTALS_KEY, currentOffset: earliest.currentOffset },
       });
 
       await queue.add('process-entry', {
-        url: latest.url,
-        offset: latest.currentOffset,
-        expiresAt: latest.expiresAt,
+        url: earliest.url,
+        offset: earliest.currentOffset,
+        expiresAt: earliest.expiresAt,
       });
 
-      logger.info(`Initialized cursor at offset ${latest.currentOffset}`);
+      logger.info(`Initialized cursor at offset ${earliest.currentOffset}`);
       return;
     }
 
@@ -100,10 +107,22 @@ async function pollOnce(queue: Queue): Promise<void> {
     // sequence. Treat offsets as opaque pagination cursors, not sortable identifiers.
     const batch = await fetchBatchNext(cursor.currentOffset, JOURNAL_BATCH_SIZE);
 
-    // TODO(2027-03-beta migration): once we move to the 2027-03-beta journal
-    // endpoints, `batch/next` returns 404 on an invalid/aged-out offset (handled
-    // in the catch below), so no client-side stale-cursor recovery is needed.
-    if (batch.results.length === 0 && batch.numErrors === 0) {
+    // A 404 means the stored offset is invalid or has aged out of the journal.
+    // Retrying it would stall forever, so clear the cursor and re-initialize from the
+    // earliest retained entry. Events that aged out are lost — run a bulk snapshot to backfill.
+    if (!batch) {
+      logger.warn(
+        `Journal offset ${cursor.currentOffset} not found (expired or invalid); re-initializing from earliest. ` +
+          'Events that aged out of the journal were skipped — trigger a bulk snapshot to backfill.'
+      );
+      await prisma.journalCursor.deleteMany({ where: { portalId: ALL_PORTALS_KEY } });
+      return;
+    }
+
+    // numErrors/errors are omitted from the response when there are no errors.
+    const batchErrors = batch.errors ?? [];
+
+    if (batch.results.length === 0 && batchErrors.length === 0) {
       logger.debug('No new journal entries');
       return;
     }
@@ -125,8 +144,8 @@ async function pollOnce(queue: Queue): Promise<void> {
     }
 
     // Retry failed offsets
-    if (batch.numErrors > 0) {
-      const failedOffsets = batch.errors
+    if (batchErrors.length > 0) {
+      const failedOffsets = batchErrors
         .map((e) => e.context?.offset?.[0])
         .filter((o): o is string => !!o);
 
@@ -146,8 +165,9 @@ async function pollOnce(queue: Queue): Promise<void> {
               }))
             );
           }
-          if (retryResponse.numErrors > 0) {
-            const stillFailed = retryResponse.errors.map((e) => e.context?.offset?.[0]).filter(Boolean);
+          const retryErrors = retryResponse.errors ?? [];
+          if (retryErrors.length > 0) {
+            const stillFailed = retryErrors.map((e) => e.context?.offset?.[0]).filter(Boolean);
             logger.error(`${stillFailed.length} offsets failed after retry: ${stillFailed.join(', ')}`);
           }
         } catch (error) {
@@ -214,7 +234,7 @@ export function isPollingActive(): boolean {
 }
 
 export async function resetCursorToLatest(): Promise<void> {
-  const latest = await fetchLatestEntry();
+  const latest = await fetchBoundaryEntry('latest');
   if (latest) {
     await prisma.journalCursor.upsert({
       where: { portalId: ALL_PORTALS_KEY },

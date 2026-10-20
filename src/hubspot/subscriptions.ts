@@ -2,7 +2,7 @@ import axios from 'axios';
 import { getClientCredentialToken } from '../auth';
 import { createLogger } from '../utils/logger';
 import {
-  HUBSPOT_API_BASE,
+  SUBSCRIPTIONS_API_BASE,
   APP_INSTALL_EVENT_TYPE_ID,
   APP_UNINSTALL_EVENT_TYPE_ID,
 } from '../utils/utils';
@@ -32,7 +32,7 @@ export async function subscribeToAppLifecycleEvents(): Promise<void> {
   for (const { name, eventTypeId } of lifecycleEvents) {
     try {
       const response = await axios.post(
-        `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions`,
+        SUBSCRIPTIONS_API_BASE,
         { subscriptionType: 'APP_LIFECYCLE_EVENT', eventTypeId, properties: [] },
         { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
       );
@@ -61,7 +61,7 @@ export async function createContactSubscription(portalId: number): Promise<void>
 
   try {
     const response = await axios.post(
-      `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions`,
+      SUBSCRIPTIONS_API_BASE,
       subscriptionData,
       {
         headers: {
@@ -92,7 +92,7 @@ export async function updateSubscription(data: {
 }): Promise<unknown> {
   const token = await getClientCredentialToken();
   const response = await axios.post(
-    `${HUBSPOT_API_BASE}/webhooks/v4/subscriptions`,
+    SUBSCRIPTIONS_API_BASE,
     data,
     { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
@@ -102,7 +102,7 @@ export async function updateSubscription(data: {
 export async function getSubscriptions(): Promise<unknown[]> {
   const token = await getClientCredentialToken();
 
-  const response = await axios.get(`${HUBSPOT_API_BASE}/webhooks/v4/subscriptions`, {
+  const response = await axios.get(SUBSCRIPTIONS_API_BASE, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -115,7 +115,7 @@ export async function getSubscriptions(): Promise<unknown[]> {
 export async function deleteSubscription(subscriptionId: number): Promise<void> {
   const token = await getClientCredentialToken();
 
-  await axios.delete(`${HUBSPOT_API_BASE}/webhooks/v4/subscriptions/${subscriptionId}`, {
+  await axios.delete(`${SUBSCRIPTIONS_API_BASE}/${subscriptionId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -127,7 +127,7 @@ export async function deleteSubscription(subscriptionId: number): Promise<void> 
 export async function deletePortalSubscriptions(portalId: number): Promise<void> {
   const token = await getClientCredentialToken();
 
-  await axios.delete(`${HUBSPOT_API_BASE}/webhooks/v4/subscriptions/portals/${portalId}`, {
+  await axios.delete(`${SUBSCRIPTIONS_API_BASE}/portals/${portalId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
