@@ -84,6 +84,8 @@ createdb webhooks_journal_example  # or use your preferred method
 npm run db-init
 ```
 
+> **Upgrading an existing checkout?** Re-run `npm run db-init` (`prisma db push`) to add the `deletedAt` column to the `Contact` table.
+
 ### 5. Start the App
 
 In two terminal windows:
@@ -180,10 +182,13 @@ The app uses **two OAuth flows**:
 1. The **Journal Poller** calls `GET /webhooks-journal/journal/2027-03-beta/batch/{offset}/next/100` once per second
 2. Each journal entry URL is enqueued as a BullMQ job with 3 retry attempts and exponential backoff
 3. **Event Processor** workers (5 concurrent) dequeue jobs, download the S3 file, and process each event:
-   - `CREATE` / `UPDATE` / `RESTORE` / `SNAPSHOT` → upsert contact in database
-   - `DELETE` → remove contact from database
-   - `MERGE` → delete merged contacts, upsert surviving contact
+   - `CREATE` / `UPDATE` / `SNAPSHOT` → upsert contact in database
+   - `DELETE` → soft delete: the row is kept and `deletedAt` is set, so the contact disappears from the UI but its data is retained
+   - `RESTORE` → upsert contact and clear `deletedAt`; the stored email and names come back even though a `RESTORE` event carries few or no properties
+   - `MERGE` → remove merged contacts permanently (merged IDs never come back), upsert surviving contact
 4. **Last-write-wins**: if an incoming event's `occurredAt` is older than the contact's `lastModifiedDate`, it's skipped
+
+> **Note:** Journal file URLs are presigned S3 URLs. Their query string is a credential, so never log a URL in full. This example logs only the origin and path (see `redactPresignedUrl`).
 
 ### Empty and Not-Found Responses
 
