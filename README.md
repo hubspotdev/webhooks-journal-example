@@ -185,6 +185,19 @@ The app uses **two OAuth flows**:
    - `MERGE` → delete merged contacts, upsert surviving contact
 4. **Last-write-wins**: if an incoming event's `occurredAt` is older than the contact's `lastModifiedDate`, it's skipped
 
+### Empty and Not-Found Responses
+
+The journal API signals "nothing here" differently depending on the endpoint. Handle each case explicitly; if you port this example to `fetch` or another HTTP client, don't rely on how that client happens to treat an empty body.
+
+| Endpoint | No entries | Offset unknown or expired |
+|---|---|---|
+| `GET .../earliest`, `GET .../latest` | `204 No Content`, empty body | n/a |
+| `GET .../offset/{offset}/next` | `204 No Content`, empty body | `404` with `subCategory: "WebhooksJournalErrorType.JOURNAL_NOT_FOUND"` |
+| `GET .../batch/{offset}/next/{count}` | `200` with `results: []` | `404` with `subCategory: "WebhooksJournalErrorType.JOURNAL_NOT_FOUND"` |
+
+- When a batch has no errors, `numErrors` and `errors` are omitted from the response, so check `results` rather than `numErrors === 0`.
+- Treat only a `JOURNAL_NOT_FOUND` 404 as an expired cursor. Any other 404 (for example, an HTML 404 after a beta API version is retired) is a real error and should be surfaced, not treated as an empty journal or used as a reason to reset the cursor.
+
 ### Subscription Filters
 
 Filters narrow which events a subscription delivers to the journal. They are evaluated server-side before events are written — filtered-out events never appear in the journal.
