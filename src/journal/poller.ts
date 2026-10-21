@@ -23,18 +23,14 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 const ALL_PORTALS_KEY = 'all';
 
 async function fetchBoundaryEntry(position: 'earliest' | 'latest'): Promise<JournalEntry | null> {
-  try {
-    const headers = await getAuthHeaders();
-    const response = await requestWithRetry(() =>
-      axios.get(`${JOURNAL_API_BASE}/${position}`, { headers })
-    );
-    return response.data;
-  } catch (error: unknown) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
-      return null;
-    }
-    throw error;
+  const headers = await getAuthHeaders();
+  const response = await requestWithRetry(() =>
+    axios.get<JournalEntry>(`${JOURNAL_API_BASE}/${position}`, { headers })
+  );
+  if (response.status === 204) {
+    return null;
   }
+  return response.data;
 }
 
 // Poll all portals — the journal is app-scoped. Each event carries a portalId field
@@ -196,8 +192,6 @@ async function pollOnce(queue: Queue): Promise<void> {
         logger.warn('Auth error during polling, token may need refresh');
       } else if (status === 429) {
         logger.warn('Still rate limited after backoff retries, will retry next cycle');
-      } else if (status === 404) {
-        logger.debug('No entries found at current offset');
       } else {
         logger.error('API error during polling', error);
       }
