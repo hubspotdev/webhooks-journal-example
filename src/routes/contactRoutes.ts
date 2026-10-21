@@ -11,7 +11,7 @@ router.get('/contacts', async (req: Request, res: Response) => {
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const portalId = req.query.portalId as string | undefined;
 
-    const where = portalId && portalId !== 'all' ? { portalId } : {};
+    const where = portalId && portalId !== 'all' ? { portalId, deletedAt: null } : { deletedAt: null };
 
     const [contacts, total] = await Promise.all([
       prisma.contact.findMany({

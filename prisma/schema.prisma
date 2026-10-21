@@ -30,6 +30,7 @@ model Contact {
   firstname        String?
   lastname         String?
   lastModifiedDate DateTime?
+  deletedAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 

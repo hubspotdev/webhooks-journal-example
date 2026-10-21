@@ -28,24 +28,35 @@ async function upsertContact(event: CrmObjectEvent, tx: Prisma.TransactionClient
     logger.info(`SNAPSHOT event for contact ${hsObjectId} (portal ${portalId}), properties: ${JSON.stringify(properties)}`);
   }
 
+  // A RESTORE event's propertyChanges only carry what that action changed, so
+  // the contact's data comes back from the row we kept when it was deleted.
+  // If we have no row to restore (the app started after the delete, or an app
+  // that hard-deletes), an alternative is to request a single-object snapshot:
+  // POST ${SNAPSHOTS_API_BASE}/crm with the client-credentials token and body
+  // { snapshotRequests: [{ portalId, objectId, objectTypeId: '0-1',
+  // properties: ['email', 'firstname', 'lastname'] }] }. The current properties
+  // then arrive as a SNAPSHOT event through the journal.
   const email = 'email' in properties ? properties.email : undefined;
   const firstname = 'firstname' in properties ? properties.firstname : undefined;
   const lastname = 'lastname' in properties ? properties.lastname : undefined;
 
   // Atomic upsert with last-write-wins: only update if incoming event is newer
   const result = await tx.$executeRaw`
-    INSERT INTO "Contact" ("hsObjectId", "portalId", "email", "firstname", "lastname", "lastModifiedDate", "createdAt", "updatedAt")
-    VALUES (${hsObjectId}, ${portalId}, ${email ?? null}, ${firstname ?? null}, ${lastname ?? null}, ${occurredAt}, NOW(), NOW())
+    INSERT INTO "Contact" ("hsObjectId", "portalId", "email", "firstname", "lastname", "lastModifiedDate", "deletedAt", "createdAt", "updatedAt")
+    VALUES (${hsObjectId}, ${portalId}, ${email ?? null}, ${firstname ?? null}, ${lastname ?? null}, ${occurredAt}, NULL, NOW(), NOW())
     ON CONFLICT ("hsObjectId", "portalId") DO UPDATE SET
       "email" = COALESCE(${email ?? null}, "Contact"."email"),
       "firstname" = COALESCE(${firstname ?? null}, "Contact"."firstname"),
       "lastname" = COALESCE(${lastname ?? null}, "Contact"."lastname"),
       "lastModifiedDate" = ${occurredAt},
+      "deletedAt" = NULL,
       "updatedAt" = NOW()
     WHERE "Contact"."lastModifiedDate" IS NULL OR "Contact"."lastModifiedDate" < ${occurredAt}
   `;
 
-  if (result > 0) {
+  if (result > 0 && event.action === 'RESTORE') {
+    logger.info(`Restored contact ${hsObjectId} for portal ${portalId}`);
+  } else if (result > 0) {
     logger.info(`Upserted contact ${hsObjectId} for portal ${portalId} (action: ${event.action})`);
   } else {
     logger.debug(`Skipping stale event for contact ${hsObjectId} (last-write-wins)`);
@@ -57,17 +68,23 @@ async function deleteContact(event: CrmObjectEvent, tx: Prisma.TransactionClient
   const portalId = String(event.portalId);
   const occurredAt = new Date(event.occurredAt);
 
+  // Soft delete so a later RESTORE can bring the row's data back. For a contact
+  // we've never seen, write a tombstone so an older out-of-order CREATE/UPDATE
+  // processed afterwards is rejected by last-write-wins instead of resurrecting it.
   const result = await tx.$executeRaw`
-    DELETE FROM "Contact"
-    WHERE "hsObjectId" = ${hsObjectId}
-    AND "portalId" = ${portalId}
-    AND ("lastModifiedDate" IS NULL OR "lastModifiedDate" <= ${occurredAt})
+    INSERT INTO "Contact" ("hsObjectId", "portalId", "lastModifiedDate", "deletedAt", "createdAt", "updatedAt")
+    VALUES (${hsObjectId}, ${portalId}, ${occurredAt}, ${occurredAt}, NOW(), NOW())
+    ON CONFLICT ("hsObjectId", "portalId") DO UPDATE SET
+      "deletedAt" = ${occurredAt},
+      "lastModifiedDate" = ${occurredAt},
+      "updatedAt" = NOW()
+    WHERE "Contact"."lastModifiedDate" IS NULL OR "Contact"."lastModifiedDate" <= ${occurredAt}
   `;
 
   if (result > 0) {
-    logger.info(`Deleted contact ${hsObjectId} from portal ${portalId}`);
+    logger.info(`Soft-deleted contact ${hsObjectId} from portal ${portalId}`);
   } else {
-    logger.debug(`Contact ${hsObjectId} not found or has newer data, skipping delete`);
+    logger.debug(`Contact ${hsObjectId} has newer data, skipping delete`);
   }
 }
 
@@ -92,7 +109,7 @@ async function handleMerge(event: CrmObjectEvent, tx: Prisma.TransactionClient):
   await upsertContact(event, tx);
 }
 
-async function processEvent(event: CrmObjectEvent, tx: Prisma.TransactionClient): Promise<void> {
+export async function processEvent(event: CrmObjectEvent, tx: Prisma.TransactionClient): Promise<void> {
   if (event.objectTypeId !== '0-1') {
     logger.debug(`Skipping non-contact event (objectTypeId: ${event.objectTypeId})`);
     return;
