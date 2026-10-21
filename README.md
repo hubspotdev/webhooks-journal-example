@@ -191,7 +191,8 @@ The journal API signals "nothing here" differently depending on the endpoint. Ha
 
 | Endpoint | No entries | Offset unknown or expired |
 |---|---|---|
-| `GET .../earliest`, `GET .../latest`, `GET .../offset/{offset}/next` | `204 No Content`, empty body | — |
+| `GET .../earliest`, `GET .../latest` | `204 No Content`, empty body | n/a |
+| `GET .../offset/{offset}/next` | `204 No Content`, empty body | `404` with `subCategory: "WebhooksJournalErrorType.JOURNAL_NOT_FOUND"` |
 | `GET .../batch/{offset}/next/{count}` | `200` with `results: []` | `404` with `subCategory: "WebhooksJournalErrorType.JOURNAL_NOT_FOUND"` |
 
 - When a batch has no errors, `numErrors` and `errors` are omitted from the response, so check `results` rather than `numErrors === 0`.
