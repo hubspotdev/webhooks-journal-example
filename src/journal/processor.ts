@@ -5,13 +5,33 @@ import { prisma } from '../clients';
 import { registerPortal, unregisterPortal } from '../portals';
 import { createContactSubscription } from '../hubspot/subscriptions';
 import { createLogger } from '../utils/logger';
+import { redactPresignedUrl } from '../utils/utils';
 import { JournalEvent, JournalEventItem, CrmObjectEvent, AppLifecycleEvent } from '../types/common';
 
 const logger = createLogger('EventProcessor');
 
-async function downloadJournalFile(url: string): Promise<JournalEvent> {
-  const response = await axios.get<JournalEvent>(url);
-  return response.data;
+// tsconfig targets ES2020, which lacks ErrorOptions.cause, so carry it explicitly.
+export class JournalDownloadError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause: unknown) {
+    super(message);
+    this.name = 'JournalDownloadError';
+    this.cause = cause;
+  }
+}
+
+export async function downloadJournalFile(url: string): Promise<JournalEvent> {
+  try {
+    const response = await axios.get<JournalEvent>(url);
+    return response.data;
+  } catch (error) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    throw new JournalDownloadError(
+      `Journal file download failed (${status ?? 'network error'}) for ${redactPresignedUrl(url)}`,
+      error
+    );
+  }
 }
 
 function extractProperties(event: CrmObjectEvent): Record<string, string> {

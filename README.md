@@ -185,6 +185,8 @@ The app uses **two OAuth flows**:
    - `MERGE` → delete merged contacts, upsert surviving contact
 4. **Last-write-wins**: if an incoming event's `occurredAt` is older than the contact's `lastModifiedDate`, it's skipped
 
+> **Note:** Journal file URLs are presigned S3 URLs. Their query string is a credential, so never log a URL in full. This example logs only the origin and path (see `redactPresignedUrl`).
+
 ### Empty and Not-Found Responses
 
 The journal API signals "nothing here" differently depending on the endpoint. Handle each case explicitly; if you port this example to `fetch` or another HTTP client, don't rely on how that client happens to treat an empty body.
