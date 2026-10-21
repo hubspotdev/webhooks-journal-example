@@ -85,6 +85,7 @@ export interface ContactData {
   firstname: string | null;
   lastname: string | null;
   lastModifiedDate: Date | null;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
