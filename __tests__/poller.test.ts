@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { prisma } from '../src/clients';
-import { resetCursorToLatest } from '../src/journal/poller';
+import { fetchBatchNext, resetCursorToLatest } from '../src/journal/poller';
 
 jest.mock('axios', () => ({
   __esModule: true,
@@ -65,5 +65,46 @@ describe('resetCursorToLatest', () => {
       create: { portalId: 'all', currentOffset: 'offset-1' },
     });
     expect(mockedCursor.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchBatchNext', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns null when the offset is not in the journal (JOURNAL_NOT_FOUND)', async () => {
+    mockedGet.mockRejectedValueOnce({
+      isAxiosError: true,
+      message: 'Not Found',
+      response: {
+        status: 404,
+        data: {
+          status: 'error',
+          category: 'OBJECT_NOT_FOUND',
+          subCategory: 'WebhooksJournalErrorType.JOURNAL_NOT_FOUND',
+        },
+      },
+    });
+
+    await expect(fetchBatchNext('expired-offset', 100)).resolves.toBeNull();
+  });
+
+  it('surfaces a 404 that is not JOURNAL_NOT_FOUND, such as a retired API version', async () => {
+    const routeNotFound = {
+      isAxiosError: true,
+      message: 'Not Found',
+      response: { status: 404, data: '<html><h2>HTTP ERROR 404</h2></html>' },
+    };
+    mockedGet.mockRejectedValueOnce(routeNotFound);
+
+    await expect(fetchBatchNext('some-offset', 100)).rejects.toBe(routeNotFound);
+  });
+
+  it('returns the batch when entries are available', async () => {
+    const batch = { status: 'COMPLETE', startedAt: '', completedAt: '', results: [] };
+    mockedGet.mockResolvedValueOnce({ status: 200, data: batch });
+
+    await expect(fetchBatchNext('some-offset', 100)).resolves.toEqual(batch);
   });
 });

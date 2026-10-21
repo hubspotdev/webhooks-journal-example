@@ -22,6 +22,19 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 const ALL_PORTALS_KEY = 'all';
 
+const JOURNAL_NOT_FOUND = 'WebhooksJournalErrorType.JOURNAL_NOT_FOUND';
+
+function isJournalNotFound(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 404) return false;
+  const body: unknown = error.response.data;
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'subCategory' in body &&
+    body.subCategory === JOURNAL_NOT_FOUND
+  );
+}
+
 async function fetchBoundaryEntry(position: 'earliest' | 'latest'): Promise<JournalEntry | null> {
   const headers = await getAuthHeaders();
   const response = await requestWithRetry(() =>
@@ -36,7 +49,7 @@ async function fetchBoundaryEntry(position: 'earliest' | 'latest'): Promise<Jour
 // Poll all portals — the journal is app-scoped. Each event carries a portalId field
 // that the processor uses to store contacts per-portal. Filtering is done at the API
 // layer when returning contacts to the frontend.
-async function fetchBatchNext(
+export async function fetchBatchNext(
   offset: string,
   count: number
 ): Promise<JournalBatchResponse | null> {
@@ -47,7 +60,7 @@ async function fetchBatchNext(
     );
     return response.data;
   } catch (error: unknown) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
+    if (isJournalNotFound(error)) {
       return null;
     }
     throw error;
@@ -103,7 +116,7 @@ async function pollOnce(queue: Queue): Promise<void> {
     // sequence. Treat offsets as opaque pagination cursors, not sortable identifiers.
     const batch = await fetchBatchNext(cursor.currentOffset, JOURNAL_BATCH_SIZE);
 
-    // A 404 means the stored offset is invalid or has aged out of the journal.
+    // A JOURNAL_NOT_FOUND 404 means the stored offset is invalid or has aged out of the journal.
     // Retrying it would stall forever, so clear the cursor and re-initialize from the
     // earliest retained entry. Events that aged out are lost — run a bulk snapshot to backfill.
     if (!batch) {
