@@ -2,6 +2,8 @@ export const PORT = 3002;
 
 export const HUBSPOT_API_BASE = 'https://api.hubapi.com';
 
+export const OAUTH_TOKEN_URL = `${HUBSPOT_API_BASE}/oauth/2026-09/token`;
+
 export const WEBHOOKS_JOURNAL_API_VERSION = '2027-03-beta';
 export const JOURNAL_API_BASE = `${HUBSPOT_API_BASE}/webhooks-journal/journal/${WEBHOOKS_JOURNAL_API_VERSION}`;
 export const SUBSCRIPTIONS_API_BASE = `${HUBSPOT_API_BASE}/webhooks-journal/subscriptions/${WEBHOOKS_JOURNAL_API_VERSION}`;
@@ -26,3 +28,13 @@ export const APP_UNINSTALL_EVENT_TYPE_ID = process.env.APP_UNINSTALL_EVENT_TYPE_
 export const JOURNAL_POLL_INTERVAL_MS = 1000;
 export const JOURNAL_BATCH_SIZE = 100;
 export const SNAPSHOT_POLL_INTERVAL_MS = 1000;
+
+// Journal file URLs are S3 presigned URLs: the query string is the credential.
+export function redactPresignedUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}${parsed.search ? '?<redacted>' : ''}`;
+  } catch {
+    return '<invalid url>';
+  }
+}

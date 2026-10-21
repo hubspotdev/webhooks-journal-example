@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as hubspot from '@hubspot/api-client';
 import { prisma, hubspotClient, LIMITER_OPTIONS } from './clients';
-import { HUBSPOT_API_BASE, JOURNAL_SCOPES, OAUTH_SCOPES } from './utils/utils';
+import { OAUTH_TOKEN_URL, JOURNAL_SCOPES, OAUTH_SCOPES } from './utils/utils';
 import { registerPortal } from './portals';
 import { createLogger } from './utils/logger';
 
@@ -137,7 +137,7 @@ export async function getClientCredentialToken(): Promise<string> {
   logger.info('Requesting new client credentials token...');
 
   const response = await axios.post(
-    `${HUBSPOT_API_BASE}/oauth/v1/token`,
+    OAUTH_TOKEN_URL,
     new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: CLIENT_ID!,
